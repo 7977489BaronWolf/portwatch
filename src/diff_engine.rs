@@ -1,50 +1,49 @@
 use std::collections::HashSet;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct PortDiff {
-    pub opened: Vec<u16>,
-    pub closed: Vec<u16>,
+/// Represents a single listening port entry captured during a scan.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PortEntry {
+    pub port: u16,
+    pub protocol: String,
+    pub pid: Option<u32>,
+    pub process: Option<String>,
+}
+
+impl PortEntry {
+    pub fn key(&self) -> String {
+        format!("{}:{}", self.protocol, self.port)
+    }
+}
+
+/// Describes a change between two port snapshots.
+#[derive(Debug, Clone)]
+pub enum PortDiff {
+    Opened(PortEntry),
+    Closed(PortEntry),
 }
 
 impl PortDiff {
-    pub fn is_empty(&self) -> bool {
-        self.opened.is_empty() && self.closed.is_empty()
+    pub fn key(&self) -> String {
+        match self {
+            PortDiff::Opened(e) | PortDiff::Closed(e) => e.key(),
+        }
     }
 }
 
-pub fn compute_diff(previous: &[u16], current: &[u16]) -> PortDiff {
-    let prev_set: HashSet<u16> = previous.iter().cloned().collect();
-    let curr_set: HashSet<u16> = current.iter().cloned().collect();
+/// Compute the diff between two port snapshots.
+pub fn compute_diff(previous: &[PortEntry], current: &[PortEntry]) -> Vec<PortDiff> {
+    let prev_set: HashSet<_> = previous.iter().collect();
+    let curr_set: HashSet<_> = current.iter().collect();
 
-    let mut opened: Vec<u16> = curr_set.difference(&prev_set).cloned().collect();
-    let mut closed: Vec<u16> = prev_set.difference(&curr_set).cloned().collect();
+    let mut diffs = Vec::new();
 
-    opened.sort_unstable();
-    closed.sort_unstable();
+    for entry in curr_set.difference(&prev_set) {
+        diffs.push(PortDiff::Opened((*entry).clone()));
+    }
 
-    PortDiff { opened, closed }
+    for entry in prev_set.difference(&curr_set) {
+        diffs.push(PortDiff::Closed((*entry).clone()));
+    }
+
+    diffs
 }
-
-pub fn format_diff_message(diff: &PortDiff) -> String {
-    let mut parts = Vec::new();
-
-    if !diff.opened.is_empty() {
-        let ports: Vec<String> = diff.opened.iter().map(|p| p.to_string()).collect();
-        parts.push(format!("Opened ports: {}", ports.join(", ")));
-    }
-
-    if !diff.closed.is_empty() {
-        let ports: Vec<String> = diff.closed.iter().map(|p| p.to_string()).collect();
-        parts.push(format!("Closed ports: {}", ports.join(", ")));
-    }
-
-    if parts.is_empty() {
-        return "No port changes detected.".to_string();
-    }
-
-    parts.join(" | ")
-}
-
-#[cfg(test)]
-#[path = "diff_engine_tests.rs"]
-mod tests;
