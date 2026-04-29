@@ -1,63 +1,61 @@
 mod config;
-mod notifier;
-mod port_scanner;
-
-#[cfg(test)]
 mod config_tests;
-#[cfg(test)]
+mod notifier;
 mod notifier_tests;
-#[cfg(test)]
+mod port_scanner;
 mod port_scanner_tests;
+mod state_store;
+mod state_store_tests;
+
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use config::Config;
 use notifier::Notifier;
 use port_scanner::PortScanner;
-use std::collections::HashSet;
-use std::thread;
-use std::time::Duration;
+use state_store::{PortState, StateStore};
 
-const DEFAULT_CONFIG_PATH: &str = "/etc/portwatch/config.toml";
+fn current_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
 
-fn main() {
-    let config_path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| DEFAULT_CONFIG_PATH.to_string());
+fn run(config: &Config, store: &StateStore, scanner: &PortScanner, notifier: &Notifier) {
+    let open_ports = scanner.scan();
+    let now = current_timestamp();
+    let new_state = PortState::new(open_ports, now);
 
-    let config = match Config::load(&config_path) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("[portwatch] Failed to load config: {}", e);
-            eprintln!("[portwatch] Using default configuration.");
-            Config::default()
-        }
-    };
-
-    println!(
-        "[portwatch] Starting. Scan interval: {}s",
-        config.scan_interval_secs
-    );
-
-    let notifier = Notifier::new(config.notification_hooks.clone());
-    let scanner = PortScanner::new();
-    let watch_set: HashSet<u16> = config.ports_to_watch.iter().cloned().collect();
-
-    let mut previous = scanner.scan(&watch_set);
-    println!("[portwatch] Initial scan complete. {} ports open.", previous.len());
-
-    loop {
-        thread::sleep(Duration::from_secs(config.scan_interval_secs));
-
-        let current = scanner.scan(&watch_set);
-        let changes = scanner.diff(&previous, &current);
-
-        if !changes.is_empty() {
-            println!("[portwatch] Detected {} change(s).", changes.len());
-            let errors = notifier.notify_all(&changes);
-            for err in &errors {
-                eprintln!("[portwatch] Notification error: {}", err);
+    match store.load() {
+        Ok(Some(prev_state)) => {
+            let diff = prev_state.diff(&new_state);
+            if !diff.is_empty() {
+                notifier.notify(&diff);
             }
         }
+        Ok(None) => {
+            println!("[portwatch] No previous state found. Establishing baseline.");
+        }
+        Err(e) => {
+            eprintln!("[portwatch] Failed to load state: {}", e);
+        }
+    }
 
-        previous = current;
+    if let Err(e) = store.save(&new_state) {
+        eprintln!("[portwatch] Failed to save state: {}", e);
+    }
+}
+
+fn main() {
+    let config = Config::load("portwatch.toml").unwrap_or_default();
+    let store = StateStore::new(&config.state_file);
+    let scanner = PortScanner::new(&config);
+    let notifier = Notifier::new(&config);
+
+    println!("[portwatch] Starting daemon (interval: {}s)", config.interval_secs);
+
+    loop {
+        run(&config, &store, &scanner, &notifier);
+        std::thread::sleep(std::time::Duration::from_secs(config.interval_secs));
     }
 }
