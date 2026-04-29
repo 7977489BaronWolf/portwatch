@@ -37,6 +37,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_port_from_hex_known_values() {
+        // 0050 hex == 80 decimal (HTTP)
+        assert_eq!(parse_port_from_hex("0050"), Some(80));
+        // 01BB hex == 443 decimal (HTTPS)
+        assert_eq!(parse_port_from_hex("01BB"), Some(443));
+        // 1F90 hex == 8080 decimal
+        assert_eq!(parse_port_from_hex("1F90"), Some(8080));
+        // Invalid input should return None
+        assert_eq!(parse_port_from_hex("ZZZZ"), None);
+        assert_eq!(parse_port_from_hex(""), None);
+    }
+
+    #[test]
     fn scan_open_ports_returns_result() {
         // On Linux with /proc available this should succeed;
         // on other platforms it gracefully returns an empty set.
