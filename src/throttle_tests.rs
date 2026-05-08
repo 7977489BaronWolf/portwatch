@@ -75,4 +75,14 @@ mod tests {
         assert!(r.is_some());
         assert!(r.unwrap() <= Duration::from_secs(60));
     }
+
+    #[test]
+    fn remaining_returns_none_after_cooldown_expires() {
+        let mut t = Throttle::new(Duration::from_millis(50));
+        let k = key(8080, "opened");
+        t.allow(&k);
+        assert!(t.remaining(&k).is_some(), "should have remaining time immediately after firing");
+        thread::sleep(Duration::from_millis(60));
+        assert!(t.remaining(&k).is_none(), "remaining should be None after cooldown expires");
+    }
 }
